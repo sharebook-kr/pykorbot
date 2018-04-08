@@ -4,6 +4,7 @@ from PyQt5.QtGui import *
 from PyQt5.QtCore import *
 from PyQt5 import uic
 import pykorbit
+import pykorbit.history
 import time
 import csv
 import os
@@ -18,23 +19,43 @@ form_class = uic.loadUiType("./ui/window.ui")[0]
 
 # 실시간 시세를 조회하는 클래스
 class PriceChecker(QThread):
-    finished = pyqtSignal(list, list)
+    finished = pyqtSignal(list, list, list)
 
     def run(self):
         # 코인 현재가
         price_list = []
         rate_list = []
+        state_list = []         # bull market/bear market
 
         for coin in COIN:
             price = pykorbit.get_current_price(coin)
             rate = self.get_rate_24(coin)
+            state = self.get_market_state(coin, window=5)
             time.sleep(0.2)
 
             price_list.append(price)
             rate_list.append(rate)
+            state_list.append(state)
 
         # 시그널 발생
-        self.finished.emit(price_list, rate_list)
+        self.finished.emit(price_list, rate_list, state_list)
+
+    @staticmethod
+    def get_market_state(currency, window):
+        try:
+            symbol = currency[:3].upper()
+            df = pykorbit.history.get_daily_ohlc(symbol=symbol)
+            ma = df['close'].rolling(window=window).mean()
+
+            cur_price = pykorbit.get_current_price(currency)
+            ma_price = ma[-1]
+
+            if cur_price > ma_price:
+                return "상승장"
+            else:
+                return "하락장"
+        except:
+            return "N/A"
 
     @staticmethod
     def get_rate_24(currency):
@@ -86,6 +107,8 @@ class MyWindow(QMainWindow, form_class):
         self._auto_load()
         self._create_threads()                                  # 스레드 생성
         self._set_signal_slot()                                 # 시그널/슬롯 설정
+
+        self.timeout()
         self._create_timers()                                   # 타이머 생성
 
     def _auto_load(self):
@@ -188,8 +211,8 @@ class MyWindow(QMainWindow, form_class):
             self.tableWidget_2.setItem(i, 2, price_item)
 
 
-    @pyqtSlot(list, list)
-    def display_price(self, price, rate):
+    @pyqtSlot(list, list, list)
+    def display_price(self, price, rate, state):
         self.coin_cur_price = price
 
         self.textEdit.insertPlainText("시세 조회 데이터 갱신 완료 (%s)\n" % self.str_time)
@@ -209,9 +232,15 @@ class MyWindow(QMainWindow, form_class):
             rate_item = QTableWidgetItem(rate_format)
             rate_item.setTextAlignment(Qt.AlignVCenter | Qt.AlignRight)
 
+            # 상승장/하락장
+            state_format = state[i]
+            state_item = QTableWidgetItem(state_format)
+            state_item.setTextAlignment(Qt.AlignVCenter | Qt.AlignRight)
+
             self.tableWidget.setItem(i, 0, coin_name)
             self.tableWidget.setItem(i, 1, price_item)
             self.tableWidget.setItem(i, 2, rate_item)
+            self.tableWidget.setItem(i, 3, state_item)
 
         self.tableWidget.resizeColumnsToContents()
 
